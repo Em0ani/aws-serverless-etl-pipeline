@@ -1,0 +1,603 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Projet 5 – Pipeline ETL serverless :
+  S3 (raw) → Lambda (CSV→Parquet Wrangler) → S3 (Parquet) → Glue → Athena
+
+Parameters:
+  InputBucketName:
+    Type: String
+    Description: Nom du bucket S3 d’entrée (CSV brut)
+  OutputBucketName:
+    Type: String
+    Description: Nom du bucket S3 de sortie (Parquet traité)
+  AthenaResultsBucket:
+    Type: String
+    Description: Bucket S3 pour stocker les résultats Athena
+  OwnerId:
+    Type: String
+    Default: '21031'
+    Description: Identifiant de l’étudiant
+  LabId:
+    Type: String
+    Default: 'PROJET-5'
+    Description: Identifiant du lab
+  GroupId:
+    Type: String
+    Default: 'GROUP-21016-21031-21068-24264'
+    Description: Identifiant du groupe
+
+Resources:
+  ### 1) KMS CMK
+  CMKEncryptionKey:
+    DeletionPolicy: Delete
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK pour chiffrer S3 et Athena
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: "*"
+          - Sid: AllowLambdaAndGlueUse
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - glue.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: "*"
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 2) Dead-letter queue pour les erreurs Lambda
+  DeadLetterQueue:
+    DeletionPolicy: Delete
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${OwnerId}-etl-dlq'
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 3) SNS Topic unique pour les alertes pipeline
+  PipelineAlertsTopic:
+    DeletionPolicy: Delete
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${OwnerId}-pipeline-alerts'
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 4) Abonnement email pour les alertes
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref PipelineAlertsTopic
+      Protocol: email
+      Endpoint: 21031@supnum.mr
+
+  ### 5) IAM Role pour Lambda & Glue
+  LambdaExecutionRole:
+    DeletionPolicy: Delete
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:aws:s3:::${InputBucketName}
+                  - !Sub arn:aws:s3:::${InputBucketName}/*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:aws:s3:::${OutputBucketName}
+                  - !Sub arn:aws:s3:::${OutputBucketName}/*
+        - PolicyName: SqsSendMessage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DeadLetterQueue.Arn
+        - PolicyName: GlueAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:CreateDatabase
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                Resource:
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 6) Buckets S3
+  RawBucket:
+    DeletionPolicy: Delete
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref InputBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireRawObjects
+            Status: Enabled
+            ExpirationInDays: 30
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
+            Function: !Ref TransformAlias
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ProcessedBucket:
+    DependsOn:
+      - StartCrawlerFunction
+      - StartCrawlerFunctionPermission
+    DeletionPolicy: Delete
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref OutputBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireProcessedObjects
+            Status: Enabled
+            ExpirationInDays: 90
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .parquet
+            Function: !GetAtt StartCrawlerFunction.Arn
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  AthenaResultsS3Bucket:
+    DeletionPolicy: Delete
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref AthenaResultsBucket
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAthenaResults
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 7) Lambda de transformation + alias
+  TransformFunction:
+    DeletionPolicy: Delete
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-${OwnerId}-csv-to-parquet"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 512
+      Timeout: 300
+      DeadLetterConfig:
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      TracingConfig:
+        Mode: Active
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python39:25
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucketName
+      Code:
+        ZipFile: |
+          import os, json, awswrangler as wr, pandas as pd
+
+          OUTPUT_BUCKET = os.environ['OUTPUT_BUCKET']
+
+          def lambda_handler(event, context):
+              print("DEBUG_EVENT:", json.dumps(event))
+              for rec in event['Records']:
+                  src = rec['s3']['bucket']['name']
+                  key = rec['s3']['object']['key']
+                  df = wr.s3.read_csv(f"s3://{src}/{key}")
+
+                  df['date_consultation'] = pd.to_datetime(df['date_consultation'], format='%Y-%m-%d')
+                  df['year']  = df['date_consultation'].dt.year
+                  df['month'] = df['date_consultation'].dt.month
+                  bins, labels = [0,12,18,65,200], ['enfant','adolescent','adulte','senior']
+                  df['age_group'] = pd.cut(df['patient_age'], bins=bins, labels=labels, right=False)
+
+                  df = df.dropna(subset=['diagnostic'])
+                  for old, new in [
+                      ('id_consultation','consultation_id'),
+                      ('id_centre','centre_id'),
+                      ('sexe','gender')
+                  ]:
+                      if old in df.columns:
+                          df = df.rename(columns={old:new})
+
+                  if df.empty:
+                      print("DEBUG: no rows to process, exiting")
+                      return
+
+                  dst = key.replace('.csv','.parquet')
+                  wr.s3.to_parquet(df=df, path=f"s3://{OUTPUT_BUCKET}/{dst}", dataset=False)
+                  print(f"Transformé : {dst} ({len(df)} lignes)")
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  TransformFunctionVersion:
+    DeletionPolicy: Delete
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref TransformFunction
+
+  TransformAlias:
+    DeletionPolicy: Delete
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: prod
+      FunctionName: !Ref TransformFunction
+      FunctionVersion: !GetAtt TransformFunctionVersion.Version
+
+  LambdaInvokePermission:
+    DeletionPolicy: Delete
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TransformAlias
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  ### 8) Démarrage du crawler via Lambda
+  StartCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: StartCrawlerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:crawler/${AWS::StackName}-${OwnerId}-crawler
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  StartCrawlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-${OwnerId}-start-crawler"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt StartCrawlerRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          CRAWLER_NAME: !Sub "${AWS::StackName}-${OwnerId}-crawler"
+      Code:
+        ZipFile: |
+          import os, boto3
+          def lambda_handler(event, context):
+              crawler = os.environ['CRAWLER_NAME']
+              boto3.client('glue').start_crawler(Name=crawler)
+
+  StartCrawlerFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StartCrawlerFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:aws:s3:::${OutputBucketName}"
+
+  ### 9) Glue Database & Crawler
+  GlueDatabase:
+    DeletionPolicy: Delete
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub "${AWS::StackName}-${OwnerId}-etl_db"
+        Description: Base de données Glue pour Projet 5
+
+  GlueCrawler:
+    DependsOn: ProcessedBucket
+    DeletionPolicy: Delete
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-crawler"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${OutputBucketName}/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        supnum:Lab: !Ref LabId
+        supnum:Group: !Ref GroupId
+        supnum:Owner: !Ref OwnerId
+
+  ### 10) Athena WorkGroup
+  AthenaWorkGroup:
+    DeletionPolicy: Delete
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-workgroup"
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${AthenaResultsBucket}/"
+          EncryptionConfiguration:
+            EncryptionOption: SSE_KMS
+            KmsKey: !Ref CMKEncryptionKey
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 11) CloudWatch Alarms pour la Lambda
+  LambdaErrorsAlarm:
+    DeletionPolicy: Delete
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${OwnerId}-LambdaErrors"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref TransformFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref PipelineAlertsTopic
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  LambdaDurationAlarm:
+    DeletionPolicy: Delete
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${OwnerId}-LambdaDuration"
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref TransformFunction
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 450000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref PipelineAlertsTopic
+      Tags:
+        - Key: supnum:Lab
+          Value: !Ref LabId
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
+  ### 12) EventBridge Rules pour tout le pipeline
+  RawS3ObjectCreatedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-RawS3CreateRule"
+      EventPattern:
+        source: [ aws.s3 ]
+        detail-type: [ Object Created ]
+        detail:
+          bucket:
+            name: [ !Ref InputBucketName ]
+      Targets:
+        - Id: RawS3Event
+          Arn: !Ref PipelineAlertsTopic
+
+  ProcessedS3ObjectCreatedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-ProcessedS3CreateRule"
+      EventPattern:
+        source: [ aws.s3 ]
+        detail-type: [ Object Created ]
+        detail:
+          bucket:
+            name: [ !Ref OutputBucketName ]
+      Targets:
+        - Id: ProcessedS3Event
+          Arn: !Ref PipelineAlertsTopic
+
+  LambdaAsyncInvokeFailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-LambdaAsyncFailureRule"
+      EventPattern:
+        source: [ aws.lambda ]
+        detail-type: [ "Lambda Function Invocation Result - Async" ]
+        detail:
+          requestContext:
+            functionArn: [ !GetAtt TransformFunction.Arn ]
+          responsePayload:
+            errorMessage:
+              - exists: true
+      Targets:
+        - Id: LambdaFailureEvent
+          Arn: !Ref PipelineAlertsTopic
+
+  CrawlerStateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-CrawlerStateChangeRule"
+      EventPattern:
+        source: [ aws.glue ]
+        detail-type: [ "Glue Crawler State Change" ]
+        detail:
+          crawlerName: [ !Sub "${AWS::StackName}-${OwnerId}-crawler" ]
+      Targets:
+        - Id: CrawlerStateChangeEvent
+          Arn: !Ref PipelineAlertsTopic
+
+  AthenaQueryStateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-${OwnerId}-AthenaQueryStateChangeRule"
+      EventPattern:
+        source: [ aws.athena ]
+        detail-type: [ "Athena Query State Change" ]
+        detail:
+          workGroup: [ !Ref AthenaWorkGroup ]
+      Targets:
+        - Id: AthenaQueryStateChangeEvent
+          Arn: !Ref PipelineAlertsTopic
+
+Outputs:
+  RawBucketName:
+    Value: !Ref RawBucket
+  ProcessedBucketName:
+    Value: !Ref ProcessedBucket
+  AthenaResultsBucketName:
+    Value: !Ref AthenaResultsS3Bucket
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+
