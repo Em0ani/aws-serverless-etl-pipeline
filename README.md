@@ -154,8 +154,8 @@ Value should switch from `RUNNING` to `READY` once catalog update is complete.
 ```bash
 aws athena start-query-execution \
   --work-group projet5-etl-21031-workgroup \
-  --query-string "SELECT age_group, COUNT(*) cnt \
-    FROM \"projet5-etl-21031-etl_db\".supnum_processed_21031 \
+  --query-string "SELECT age_group, COUNT(*) AS cnt \
+    FROM \"projet5-etl-21031-etl_db\".projet5_processed_bucket \
     GROUP BY age_group;" \
   --query-execution-context Database=projet5-etl-21031-etl_db \
   --result-configuration OutputLocation=s3://projet5-athena-results-bucket/
