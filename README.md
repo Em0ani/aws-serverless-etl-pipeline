@@ -82,9 +82,9 @@ REPO-GROUP-21031-21016-21068-24264/
      --stack-name projet5-etl \
      --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides \
-         InputBucketName=<your-raw-bucket> \
-         OutputBucketName=<your-processed-bucket> \
-         AthenaResultsBucket=<your-athena-results-bucket> \
+         InputBucketName=projet5-raw-bucket \
+         OutputBucketName=projet5-processed-bucket \
+         AthenaResultsBucket=projet5-athena-results-bucket \
          OwnerId=21031 \
          GroupId=GROUP-21016-21031-21068-24264
    ```
@@ -99,20 +99,115 @@ REPO-GROUP-21031-21016-21068-24264/
 
 ## 🧪 Testing the Pipeline
 
-1. **Upload** the **consultations.csv** file to your raw S3 bucket:
+Follow these **sequential commands**, one step at a time:
 
-   ```bash
-   aws s3 cp consultations.csv s3://<your-raw-bucket>/sample.csv
-   ```
-2. **Monitor** the Lambda logs in CloudWatch for transformation output.
-3. **Inspect** the processed Parquet file in the processed S3 bucket.
-4. **Run** an Athena query (in the `projet5-etl_*` database) to validate data, for example:
+---
 
-   ```sql
-   SELECT age_group, COUNT(*) AS cnt
-   FROM "projet5-etl-21031-etl_db".supnum_processed_21031
-   GROUP BY age_group;
-   ```
+### 1 – Upload the dataset to the raw bucket
+
+```bash
+aws s3 cp data/consultations.csv s3://projet5-raw-bucket/consultations.csv
+```
+
+Verify in the S3 console (Raw bucket) that the object is present.
+
+---
+
+### 2 – Watch the Lambda transform in real time
+
+```bash
+aws logs tail /aws/lambda/projet5-etl-21031-csv-to-parquet --since 1m --follow
+```
+
+You should see a log line like:
+
+```
+Transformé : consultations.parquet (… lignes)
+```
+
+---
+
+### 3 – Confirm the Parquet file in the processed bucket
+
+```bash
+aws s3 ls s3://projet5-processed-bucket/ --recursive | grep consultations.parquet
+```
+
+Expect a single `.parquet` object.
+
+---
+
+### 4 – Check Glue Crawler state
+
+```bash
+aws glue get-crawler \
+  --name projet5-etl-21031-crawler \
+  --query 'Crawler.State' --output text
+```
+
+Value should switch from `RUNNING` to `READY` once catalog update is complete.
+
+---
+
+### 5 – Launch an Athena query
+
+```bash
+aws athena start-query-execution \
+  --work-group projet5-etl-21031-workgroup \
+  --query-string "SELECT age_group, COUNT(*) cnt \
+    FROM \"projet5-etl-21031-etl_db\".supnum_processed_21031 \
+    GROUP BY age_group;" \
+  --query-execution-context Database=projet5-etl-21031-etl_db \
+  --result-configuration OutputLocation=s3://projet5-athena-results-bucket/
+```
+
+Note the `QueryExecutionId` returned.
+
+---
+
+### 6 – Fetch the query results
+
+```bash
+aws athena get-query-results --query-execution-id <QueryExecutionId>
+```
+
+You should see row counts per `age_group`.
+
+---
+
+### 7 – Locate the results file in the Athena bucket
+
+```bash
+aws s3 ls s3://projet5-athena-results-bucket/ --recursive | head
+```
+
+The CSV/JSON result file for the query is stored here.
+
+---
+
+### 8 – ( Optional ) Trigger the DLQ to test alerting
+
+Upload an empty or malformed CSV:
+
+```bash
+aws s3 cp bad.csv s3://projet5-raw-bucket/bad.csv
+```
+
+After a few minutes, check the DLQ metric or SQS queue:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/SQS \
+  --metric-name ApproximateNumberOfMessagesVisible \
+  --dimensions Name=QueueName,Value=<OwnerId>-etl-dlq \
+  --start-time $(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) \
+  --end-time   $(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --period 300 --statistics Sum
+```
+
+An SNS e‑mail alert should arrive because the DLQ now contains ≥ 1 message.
+
+> The examples already contain the stack name `projet5-etl`; replace only the bucket/workgroup names where indicated.
 
 ---
 
@@ -128,10 +223,10 @@ REPO-GROUP-21031-21016-21068-24264/
 
 ## 📈 Monitoring
 
-* **CloudWatch Alarms** on Lambda Errors & Duration
+* **CloudWatch Alarms** on Lambda Errors & Duration, **and on DLQ message count (ApproximateNumberOfMessagesVisible) — you’ll get an email as soon as at least one message is waiting**
 * **SNS Topic** aggregates alerts → email subscription
 
-> **Note :** EventBridge rules were removed from the architecture; all alerting now relies solely on CloudWatch metrics forwarded through SNS.
+
 
 ---
 
