@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
   Projet 5 – Pipeline ETL serverless :
-  S3 (raw) → Lambda (CSV→Parquet Wrangler) → S3 (Parquet) → Glue → Athena
+  S3 (raw) → Lambda (CSV→Parquet) → S3 (Parquet) → Glue → Athena
 
 Parameters:
   InputBucketName:
@@ -17,10 +17,6 @@ Parameters:
     Type: String
     Default: '21031'
     Description: Identifiant de l’étudiant
-  LabId:
-    Type: String
-    Default: 'PROJET-5'
-    Description: Identifiant du lab
   GroupId:
     Type: String
     Default: 'GROUP-21016-21031-21068-24264'
@@ -55,8 +51,6 @@ Resources:
               - kms:DescribeKey
             Resource: "*"
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -68,8 +62,6 @@ Resources:
     Properties:
       QueueName: !Sub '${OwnerId}-etl-dlq'
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -81,8 +73,6 @@ Resources:
     Properties:
       TopicName: !Sub '${OwnerId}-pipeline-alerts'
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -153,8 +143,6 @@ Resources:
                   - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*
                   - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -191,8 +179,6 @@ Resources:
                     Value: .csv
             Function: !Ref TransformAlias
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -232,8 +218,6 @@ Resources:
                     Value: .parquet
             Function: !GetAtt StartCrawlerFunction.Arn
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -261,8 +245,6 @@ Resources:
             Status: Enabled
             ExpirationInDays: 30
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -290,41 +272,31 @@ Resources:
       Code:
         ZipFile: |
           import os, json, awswrangler as wr, pandas as pd
-
           OUTPUT_BUCKET = os.environ['OUTPUT_BUCKET']
-
           def lambda_handler(event, context):
               print("DEBUG_EVENT:", json.dumps(event))
               for rec in event['Records']:
                   src = rec['s3']['bucket']['name']
                   key = rec['s3']['object']['key']
                   df = wr.s3.read_csv(f"s3://{src}/{key}")
-
                   df['date_consultation'] = pd.to_datetime(df['date_consultation'], format='%Y-%m-%d')
-                  df['year']  = df['date_consultation'].dt.year
+                  df['year'] = df['date_consultation'].dt.year
                   df['month'] = df['date_consultation'].dt.month
-                  bins, labels = [0,12,18,65,200], ['enfant','adolescent','adulte','senior']
+                  bins, labels = [0, 12, 18, 65, 200], ['enfant', 'adolescent', 'adulte', 'senior']
                   df['age_group'] = pd.cut(df['patient_age'], bins=bins, labels=labels, right=False)
-
                   df = df.dropna(subset=['diagnostic'])
-                  for old, new in [
-                      ('id_consultation','consultation_id'),
-                      ('id_centre','centre_id'),
-                      ('sexe','gender')
-                  ]:
+                  for old, new in [('id_consultation', 'consultation_id'),
+                                   ('id_centre', 'centre_id'),
+                                   ('sexe', 'gender')]:
                       if old in df.columns:
-                          df = df.rename(columns={old:new})
-
+                          df = df.rename(columns={old: new})
                   if df.empty:
                       print("DEBUG: no rows to process, exiting")
                       return
-
-                  dst = key.replace('.csv','.parquet')
+                  dst = key.replace('.csv', '.parquet')
                   wr.s3.to_parquet(df=df, path=f"s3://{OUTPUT_BUCKET}/{dst}", dataset=False)
-                  print(f"Transformé : {dst} ({len(df)} lignes)")
+                  print(f"Transformé : {dst} ({len(df)} lignes)")
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -371,8 +343,7 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - glue:StartCrawler
+                Action: glue:StartCrawler
                 Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:crawler/${AWS::StackName}-${OwnerId}-crawler
               - Effect: Allow
                 Action:
@@ -396,8 +367,7 @@ Resources:
         ZipFile: |
           import os, boto3
           def lambda_handler(event, context):
-              crawler = os.environ['CRAWLER_NAME']
-              boto3.client('glue').start_crawler(Name=crawler)
+              boto3.client('glue').start_crawler(Name=os.environ['CRAWLER_NAME'])
 
   StartCrawlerFunctionPermission:
     Type: AWS::Lambda::Permission
@@ -432,7 +402,6 @@ Resources:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
       Tags:
-        supnum:Lab: !Ref LabId
         supnum:Group: !Ref GroupId
         supnum:Owner: !Ref OwnerId
 
@@ -449,8 +418,6 @@ Resources:
             EncryptionOption: SSE_KMS
             KmsKey: !Ref CMKEncryptionKey
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -474,8 +441,6 @@ Resources:
       AlarmActions:
         - !Ref PipelineAlertsTopic
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
@@ -499,14 +464,10 @@ Resources:
       AlarmActions:
         - !Ref PipelineAlertsTopic
       Tags:
-        - Key: supnum:Lab
-          Value: !Ref LabId
         - Key: supnum:Group
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
-
-  
 
 Outputs:
   RawBucketName:
