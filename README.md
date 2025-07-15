@@ -10,12 +10,30 @@
 
 This repository contains everything you need to deploy a fully-serverless ETL pipeline on AWS:
 
-1. **Extract** raw CSV files uploaded to S3
+1. **Extract** raw *consultation* CSV files uploaded to S3
 2. **Transform** them to Parquet via AWS Lambda
 3. **Load** and catalog with AWS Glue
 4. **Query** the results in Athena
 
 All infrastructure is defined with a single CloudFormation template.
+
+---
+
+## 🔄 Transformation Logic (Lambda)
+
+The **transform\_function.py** Lambda is automatically invoked when a new consultation CSV lands in the **Raw S3 Bucket**. It performs the following steps before writing the Parquet output to the **Processed S3 Bucket**:
+
+| Step | Action                                                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------ |
+| 1    | **Read CSV** from the triggering S3 key using *awswrangler*                                                        |
+| 2    | **Parse `date_consultation`** → `datetime`, then derive **`year`** and **`month`** columns                         |
+| 3    | **Bucketise `patient_age`** into `age_group` (`enfant`, `adolescent`, `adulte`, `senior`)                          |
+| 4    | **Drop rows** where `diagnostic` is `NULL` or empty                                                                |
+| 5    | **Rename columns** if present: `id_consultation` → `consultation_id`, `id_centre` → `centre_id`, `sexe` → `gender` |
+| 6    | **Write Parquet** file (`same‑key.parquet`) to the processed bucket with Snappy compression                        |
+| 7    | **Exit early** if the resulting DataFrame is empty to avoid pointless writes                                       |
+
+The newly created Parquet object triggers the **StartCrawler Lambda**, which launches the Glue Crawler to update the data catalog automatically.
 
 ---
 
@@ -80,7 +98,7 @@ REPO-GROUP-21031-21016-21068-24264/
 
 ## 🧪 Testing the Pipeline
 
-1. **Upload** a sample CSV to your raw S3 bucket:
+1. **Upload** a sample **consultation** CSV to your raw S3 bucket:
 
    ```bash
    aws s3 cp sample.csv s3://<your-raw-bucket>/sample.csv
