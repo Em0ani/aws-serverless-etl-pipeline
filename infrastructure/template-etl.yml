@@ -1,18 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Projet 5 – Pipeline ETL serverless :
-  S3 (raw) → Lambda (CSV→Parquet Wrangler) → S3 (Parquet) → Glue → Athena
+  Projet 5 – Pipeline ETL serverless :
+  S3 (raw) → Lambda (CSV→Parquet Wrangler) → S3 (Parquet) → Glue → Athena
 
 Parameters:
   InputBucketName:
     Type: String
-    Description: Nom du bucket S3 d’entrée (CSV brut)
+    Description: Nom du bucket S3 d’entrée (CSV brut)
   OutputBucketName:
     Type: String
-    Description: Nom du bucket S3 de sortie (Parquet traité)
+    Description: Nom du bucket S3 de sortie (Parquet traité)
   AthenaResultsBucket:
     Type: String
-    Description: Bucket S3 pour stocker les résultats Athena
+    Description: Bucket S3 pour stocker les résultats Athena
   OwnerId:
     Type: String
     Default: '21031'
@@ -27,12 +27,11 @@ Parameters:
     Description: Identifiant du groupe
 
 Resources:
-  ### 1) KMS CMK
   CMKEncryptionKey:
     DeletionPolicy: Delete
     Type: AWS::KMS::Key
     Properties:
-      Description: CMK pour chiffrer S3 et Athena
+      Description: CMK pour chiffrer S3 et Athena
       PendingWindowInDays: 7
       KeyPolicy:
         Version: '2012-10-17'
@@ -63,7 +62,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 2) Dead-letter queue pour les erreurs Lambda
   DeadLetterQueue:
     DeletionPolicy: Delete
     Type: AWS::SQS::Queue
@@ -77,7 +75,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 3) SNS Topic unique pour les alertes pipeline
   PipelineAlertsTopic:
     DeletionPolicy: Delete
     Type: AWS::SNS::Topic
@@ -91,7 +88,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 4) Abonnement email pour les alertes
   EmailSubscription:
     Type: AWS::SNS::Subscription
     Properties:
@@ -99,7 +95,6 @@ Resources:
       Protocol: email
       Endpoint: 21031@supnum.mr
 
-  ### 5) IAM Role pour Lambda & Glue
   LambdaExecutionRole:
     DeletionPolicy: Delete
     Type: AWS::IAM::Role
@@ -165,7 +160,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 6) Buckets S3
   RawBucket:
     DeletionPolicy: Delete
     Type: AWS::S3::Bucket
@@ -274,7 +268,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 7) Lambda de transformation + alias
   TransformFunction:
     DeletionPolicy: Delete
     Type: AWS::Lambda::Function
@@ -360,7 +353,6 @@ Resources:
       Principal: s3.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  ### 8) Démarrage du crawler via Lambda
   StartCrawlerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -416,7 +408,6 @@ Resources:
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub "arn:aws:s3:::${OutputBucketName}"
 
-  ### 9) Glue Database & Crawler
   GlueDatabase:
     DeletionPolicy: Delete
     Type: AWS::Glue::Database
@@ -424,7 +415,7 @@ Resources:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
         Name: !Sub "${AWS::StackName}-${OwnerId}-etl_db"
-        Description: Base de données Glue pour Projet 5
+        Description: Base de données Glue pour Projet 5
 
   GlueCrawler:
     DependsOn: ProcessedBucket
@@ -445,7 +436,6 @@ Resources:
         supnum:Group: !Ref GroupId
         supnum:Owner: !Ref OwnerId
 
-  ### 10) Athena WorkGroup
   AthenaWorkGroup:
     DeletionPolicy: Delete
     Type: AWS::Athena::WorkGroup
@@ -466,7 +456,6 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 11) CloudWatch Alarms pour la Lambda
   LambdaErrorsAlarm:
     DeletionPolicy: Delete
     Type: AWS::CloudWatch::Alarm
@@ -517,77 +506,7 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
-  ### 12) EventBridge Rules pour tout le pipeline
-  RawS3ObjectCreatedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${AWS::StackName}-${OwnerId}-RawS3CreateRule"
-      EventPattern:
-        source: [ aws.s3 ]
-        detail-type: [ Object Created ]
-        detail:
-          bucket:
-            name: [ !Ref InputBucketName ]
-      Targets:
-        - Id: RawS3Event
-          Arn: !Ref PipelineAlertsTopic
-
-  ProcessedS3ObjectCreatedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${AWS::StackName}-${OwnerId}-ProcessedS3CreateRule"
-      EventPattern:
-        source: [ aws.s3 ]
-        detail-type: [ Object Created ]
-        detail:
-          bucket:
-            name: [ !Ref OutputBucketName ]
-      Targets:
-        - Id: ProcessedS3Event
-          Arn: !Ref PipelineAlertsTopic
-
-  LambdaAsyncInvokeFailureRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${AWS::StackName}-${OwnerId}-LambdaAsyncFailureRule"
-      EventPattern:
-        source: [ aws.lambda ]
-        detail-type: [ "Lambda Function Invocation Result - Async" ]
-        detail:
-          requestContext:
-            functionArn: [ !GetAtt TransformFunction.Arn ]
-          responsePayload:
-            errorMessage:
-              - exists: true
-      Targets:
-        - Id: LambdaFailureEvent
-          Arn: !Ref PipelineAlertsTopic
-
-  CrawlerStateChangeRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${AWS::StackName}-${OwnerId}-CrawlerStateChangeRule"
-      EventPattern:
-        source: [ aws.glue ]
-        detail-type: [ "Glue Crawler State Change" ]
-        detail:
-          crawlerName: [ !Sub "${AWS::StackName}-${OwnerId}-crawler" ]
-      Targets:
-        - Id: CrawlerStateChangeEvent
-          Arn: !Ref PipelineAlertsTopic
-
-  AthenaQueryStateChangeRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${AWS::StackName}-${OwnerId}-AthenaQueryStateChangeRule"
-      EventPattern:
-        source: [ aws.athena ]
-        detail-type: [ "Athena Query State Change" ]
-        detail:
-          workGroup: [ !Ref AthenaWorkGroup ]
-      Targets:
-        - Id: AthenaQueryStateChangeEvent
-          Arn: !Ref PipelineAlertsTopic
+  
 
 Outputs:
   RawBucketName:
@@ -600,4 +519,3 @@ Outputs:
     Value: !Ref AthenaWorkGroup
   GlueDatabaseName:
     Value: !Ref GlueDatabase
-
