@@ -46,7 +46,10 @@ REPO-GROUP-21031-21016-21068-24264/
 │   ├── transform_function.py
 │   └── start-crawler.py
 ├── diagrams/
-│   └── architecture.png
+│   └── architecture.png               # Full AWS architecture diagram
+├── data/
+│   └── consultations.csv        # Example consultation CSV
+
 ├── README.md
 └── .gitignore
 ```
@@ -96,10 +99,10 @@ REPO-GROUP-21031-21016-21068-24264/
 
 ## 🧪 Testing the Pipeline
 
-1. **Upload** a sample **consultation** CSV to your raw S3 bucket:
+1. **Upload** the **consultations.csv** file to your raw S3 bucket:
 
    ```bash
-   aws s3 cp sample.csv s3://<your-raw-bucket>/sample.csv
+   aws s3 cp consultations.csv s3://<your-raw-bucket>/sample.csv
    ```
 2. **Monitor** the Lambda logs in CloudWatch for transformation output.
 3. **Inspect** the processed Parquet file in the processed S3 bucket.
