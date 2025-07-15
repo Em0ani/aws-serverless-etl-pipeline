@@ -111,8 +111,9 @@ REPO-GROUP-21031-21016-21068-24264/
 ## 📈 Monitoring
 
 * **CloudWatch Alarms** on Lambda Errors & Duration
-* **EventBridge Rules** for S3 events, Lambda failures, Glue crawler & Athena query state
 * **SNS Topic** aggregates alerts → email subscription
+
+> **Note :** EventBridge rules were removed from the architecture; all alerting now relies solely on CloudWatch metrics forwarded through SNS.
 
 ---
 
