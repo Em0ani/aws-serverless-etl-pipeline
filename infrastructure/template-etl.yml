@@ -469,6 +469,30 @@ Resources:
         - Key: supnum:Owner
           Value: !Ref OwnerId
 
+  DLQMessagesAlarm:
+    DeletionPolicy: Delete
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${OwnerId}-DLQ-Messages"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref PipelineAlertsTopic
+      Tags:
+        - Key: supnum:Group
+          Value: !Ref GroupId
+        - Key: supnum:Owner
+          Value: !Ref OwnerId
+
 Outputs:
   RawBucketName:
     Value: !Ref RawBucket
