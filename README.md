@@ -1,7 +1,6 @@
 # REPO-GROUP-21031-21016-21068-24264: Serverless ETL Pipeline
 
 **Group:** `GROUP-21016-21031-21068-24264`
-**Lab ID:** `PROJET-5`
 **Owner ID:** `21031`
 
 ---
@@ -42,13 +41,13 @@ The newly created Parquet object triggers the **StartCrawler Lambda**, which lau
 ```
 REPO-GROUP-21031-21016-21068-24264/
 ├── infrastructure/
-│   └── template-etl.yml               # CloudFormation template
+│   └── template-etl.yml
 ├── lambda/
-│   ├── transform_function.py          # Lambda CSV→Parquet code
-│   └── start-crawler.py               # Lambda to start the Glue Crawler
+│   ├── transform_function.py
+│   └── start-crawler.py
 ├── diagrams/
-│   └── architecture.png               # Full AWS architecture diagram
-├── README.md                          # (this file)
+│   └── architecture.png
+├── README.md
 └── .gitignore
 ```
 
@@ -84,7 +83,6 @@ REPO-GROUP-21031-21016-21068-24264/
          OutputBucketName=<your-processed-bucket> \
          AthenaResultsBucket=<your-athena-results-bucket> \
          OwnerId=21031 \
-         LabId=PROJET-5 \
          GroupId=GROUP-21016-21031-21068-24264
    ```
 
@@ -120,7 +118,6 @@ REPO-GROUP-21031-21016-21068-24264/
 * **Encryption:** SSE-KMS on all S3 buckets & Athena results
 * **Tags** on every resource:
 
-  * `supnum:Lab = PROJET-5`
   * `supnum:Group = GROUP-21016-21031-21068-24264`
   * `supnum:Owner = 21031`
 
@@ -131,7 +128,7 @@ REPO-GROUP-21031-21016-21068-24264/
 * **CloudWatch Alarms** on Lambda Errors & Duration
 * **SNS Topic** aggregates alerts → email subscription
 
-
+> **Note :** EventBridge rules were removed from the architecture; all alerting now relies solely on CloudWatch metrics forwarded through SNS.
 
 ---
 
