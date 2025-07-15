@@ -131,7 +131,7 @@ REPO-GROUP-21031-21016-21068-24264/
 * **CloudWatch Alarms** on Lambda Errors & Duration
 * **SNS Topic** aggregates alerts → email subscription
 
-> **Note :** EventBridge rules were removed from the architecture; all alerting now relies solely on CloudWatch metrics forwarded through SNS.
+
 
 ---
 
