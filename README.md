@@ -1,6 +1,11 @@
+Voici la version mise à jour de ton README avec **Lab ID** ajouté (en haut, dans la commande *deploy*, et dans la section *Security & Tags*). Aucun autre changement.
+
+---
+
 # REPO-GROUP-21031-21016-21068-24264: Serverless ETL Pipeline
 
 **Group:** `GROUP-21016-21031-21068-24264`
+**Lab ID:** `PROJET-5`
 **Owner ID:** `21031`
 
 ---
@@ -86,7 +91,8 @@ REPO-GROUP-21031-21016-21068-24264/
          OutputBucketName=projet5-processed-bucket \
          AthenaResultsBucket=projet5-athena-results-bucket \
          OwnerId=21031 \
-         GroupId=GROUP-21016-21031-21068-24264
+         GroupId=GROUP-21016-21031-21068-24264 \
+         LabId=PROJET-5
    ```
 
 3. **Verify**
@@ -185,7 +191,7 @@ The CSV/JSON result file for the query is stored here.
 
 ---
 
-### 8 – ( Optional ) Trigger the DLQ to test alerting
+### 8 – Trigger the DLQ to test alerting
 
 Upload an empty or malformed CSV:
 
@@ -216,6 +222,7 @@ An SNS e‑mail alert should arrive because the DLQ now contains ≥ 1 message
 * **Encryption:** SSE-KMS on all S3 buckets & Athena results
 * **Tags** on every resource:
 
+  * `supnum:Lab = PROJET-5`
   * `supnum:Group = GROUP-21016-21031-21068-24264`
   * `supnum:Owner = 21031`
 
@@ -225,8 +232,6 @@ An SNS e‑mail alert should arrive because the DLQ now contains ≥ 1 message
 
 * **CloudWatch Alarms** on Lambda Errors & Duration, **and on DLQ message count (ApproximateNumberOfMessagesVisible) — you’ll get an email as soon as at least one message is waiting**
 * **SNS Topic** aggregates alerts → email subscription
-
-
 
 ---
 
