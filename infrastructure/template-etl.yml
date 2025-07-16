@@ -21,6 +21,10 @@ Parameters:
     Type: String
     Default: 'GROUP-21016-21031-21068-24264'
     Description: Identifiant du groupe
+  LabId:
+    Type: String
+    Default: 'PROJET-5'
+    Description: Identifiant du lab
 
 Resources:
   CMKEncryptionKey:
@@ -55,6 +59,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   DeadLetterQueue:
     DeletionPolicy: Delete
@@ -66,6 +72,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   PipelineAlertsTopic:
     DeletionPolicy: Delete
@@ -77,6 +85,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   EmailSubscription:
     Type: AWS::SNS::Subscription
@@ -147,6 +157,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   RawBucket:
     DeletionPolicy: Delete
@@ -183,6 +195,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   ProcessedBucket:
     DependsOn:
@@ -222,6 +236,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   AthenaResultsS3Bucket:
     DeletionPolicy: Delete
@@ -249,6 +265,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   TransformFunction:
     DeletionPolicy: Delete
@@ -301,6 +319,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   TransformFunctionVersion:
     DeletionPolicy: Delete
@@ -404,6 +424,7 @@ Resources:
       Tags:
         supnum:Group: !Ref GroupId
         supnum:Owner: !Ref OwnerId
+        supnum:Lab: !Ref LabId
 
   AthenaWorkGroup:
     DeletionPolicy: Delete
@@ -422,6 +443,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   LambdaErrorsAlarm:
     DeletionPolicy: Delete
@@ -445,6 +468,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   LambdaDurationAlarm:
     DeletionPolicy: Delete
@@ -468,6 +493,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
   DLQMessagesAlarm:
     DeletionPolicy: Delete
@@ -492,6 +519,8 @@ Resources:
           Value: !Ref GroupId
         - Key: supnum:Owner
           Value: !Ref OwnerId
+        - Key: supnum:Lab
+          Value: !Ref LabId
 
 Outputs:
   RawBucketName:
