@@ -1,6 +1,4 @@
-Voici la version mise à jour de ton README avec **Lab ID** ajouté (en haut, dans la commande *deploy*, et dans la section *Security & Tags*). Aucun autre changement.
 
----
 
 # REPO-GROUP-21031-21016-21068-24264: Serverless ETL Pipeline
 
