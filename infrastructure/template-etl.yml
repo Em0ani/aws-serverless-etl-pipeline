@@ -1,18 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Projet 5 – Pipeline ETL serverless :
-  S3 (raw) → Lambda (CSV→Parquet) → S3 (Parquet) → Glue → Athena
+  Projet 5 – Pipeline ETL serverless :
+  S3 (raw) → Lambda (CSV→Parquet) → S3 (Parquet) → Glue → Athena
 
 Parameters:
   InputBucketName:
     Type: String
-    Description: Nom du bucket S3 d’entrée (CSV brut)
+    Description: Nom du bucket S3 d’entrée (CSV brut)
   OutputBucketName:
     Type: String
-    Description: Nom du bucket S3 de sortie (Parquet traité)
+    Description: Nom du bucket S3 de sortie (Parquet traité)
   AthenaResultsBucket:
     Type: String
-    Description: Bucket S3 pour stocker les résultats Athena
+    Description: Bucket S3 pour stocker les résultats Athena
   OwnerId:
     Type: String
     Default: '21031'
@@ -25,13 +25,20 @@ Parameters:
     Type: String
     Default: 'PROJET-5'
     Description: Identifiant du lab
+  WranglerLayerArn:
+    Type: String
+    Default: ''
+    Description: "(Optionnel) ARN du layer awswrangler/pandas. Laisser vide pour aucun layer."
+
+Conditions:
+  UseWranglerLayer: !Not [ !Equals [ !Ref WranglerLayerArn, '' ] ]
 
 Resources:
   CMKEncryptionKey:
     DeletionPolicy: Delete
     Type: AWS::KMS::Key
     Properties:
-      Description: CMK pour chiffrer S3 et Athena
+      Description: CMK pour chiffrer S3 et Athena
       PendingWindowInDays: 7
       KeyPolicy:
         Version: '2012-10-17'
@@ -282,8 +289,10 @@ Resources:
         TargetArn: !GetAtt DeadLetterQueue.Arn
       TracingConfig:
         Mode: Active
-      Layers:
-        - !Sub arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python39:25
+      Layers: !If
+        - UseWranglerLayer
+        - [ !Ref WranglerLayerArn ]
+        - !Ref "AWS::NoValue"
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucketName
@@ -313,7 +322,7 @@ Resources:
                       return
                   dst = key.replace('.csv', '.parquet')
                   wr.s3.to_parquet(df=df, path=f"s3://{OUTPUT_BUCKET}/{dst}", dataset=False)
-                  print(f"Transformé : {dst} ({len(df)} lignes)")
+                  print(f"Transformé : {dst} ({len(df)} lignes)")
       Tags:
         - Key: supnum:Group
           Value: !Ref GroupId
@@ -405,7 +414,7 @@ Resources:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
         Name: !Sub "${AWS::StackName}-${OwnerId}-etl_db"
-        Description: Base de données Glue pour Projet 5
+        Description: Base de données Glue pour Projet 5
 
   GlueCrawler:
     DependsOn: ProcessedBucket
