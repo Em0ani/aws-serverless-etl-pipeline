@@ -90,7 +90,9 @@ REPO-GROUP-21031-21016-21068-24264/
          AthenaResultsBucket=projet5-athena-results-bucket \
          OwnerId=21031 \
          GroupId=GROUP-21016-21031-21068-24264 \
-         LabId=PROJET-5
+         LabId=PROJET-5\
+         WranglerLayerArn="
+
    ```
 
 3. **Verify**
